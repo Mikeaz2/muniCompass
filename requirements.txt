@@ -1,6 +1,7 @@
-streamlit
-pandas
-numpy
-python-dateutil
-plotly
-pillow
+streamlit==1.38.0
+pandas==2.2.2
+numpy==1.26.4
+python-dateutil==2.9.0.post0
+plotly==5.23.0
+pillow==10.4.0
+

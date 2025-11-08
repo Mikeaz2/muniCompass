@@ -24,7 +24,7 @@ except Exception:
 c1, c2 = st.columns([1, 6])
 with c1:
     if logo is not None:
-        st.image(logo, width=72)
+        st.image(logo, width=250)
 with c2:
     st.title("MuniCompass — TEY & Fiscal Health Screener")
     st.caption("Find true after-tax value — where yield meets fiscal strength.")

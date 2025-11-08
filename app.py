@@ -267,7 +267,7 @@ cols = ["Rank","TierBadge","name","type","issuer_state","maturity_year",
 # Rank then show
 view["Rank"] = view["TEY_Adj_%"].rank(method="min", ascending=False).astype(int)
 show_cols = [c for c in cols if c in view.columns]
-st.dataframe(view[show_cols], width="stretch", hide_index=True)
+st.dataframe(view, width='stretch', hide_index=True)
 
 # ---------- Ladder (Plotly) ----------
 st.divider()

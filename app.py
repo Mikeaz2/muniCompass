@@ -51,13 +51,51 @@ with st.sidebar:
 @st.cache_data
 def load_data():
     base = Path(__file__).parent
-    munis = pd.read_csv(base / "data" / "munis.csv")
-    fiscal = pd.read_csv(base / "data" / "fiscal_states.csv")
-    for c in ["coupon","price","ytm"]:
-        munis[c] = munis[c].astype(float)
-    for c in ["pension_score","budget_score","maturity_year"]:
-        munis[c] = munis[c].astype(int)
-    fiscal["surplus_flag"] = fiscal["surplus_flag"].astype(bool)
+    munis_path  = base / "data" / "munis.csv"
+    fiscal_path = base / "data" / "fiscal_states.csv"
+
+    # Friendly error if files are missing
+    missing = [p for p in [munis_path, fiscal_path] if not p.exists()]
+    if missing:
+        st.error("Missing required data files:\n" + "\n".join(f"- {m.name}" for m in missing))
+        st.stop()
+
+    munis = pd.read_csv(munis_path)
+    fiscal = pd.read_csv(fiscal_path)
+
+    # Robust numeric casting (won't crash on blanks)
+    for c in ["coupon", "price", "ytm"]:
+        munis[c] = pd.to_numeric(munis.get(c), errors="coerce")
+
+    for c in ["pension_score", "budget_score", "maturity_year"]:
+        munis[c] = pd.to_numeric(munis.get(c), errors="coerce")
+
+    # Conservative fills before converting to int
+    munis["coupon"]        = munis["coupon"].fillna(0.0)
+    munis["price"]         = munis["price"].fillna(100.0)
+    munis["ytm"]           = munis["ytm"].fillna(0.02)  # 2% placeholder
+    munis["pension_score"] = munis["pension_score"].fillna(60).astype(int)
+    munis["budget_score"]  = munis["budget_score"].fillna(65).astype(int)
+    munis["maturity_year"] = munis["maturity_year"].fillna(datetime.today().year + 5).astype(int)
+
+    # Normalize text columns
+    munis["issuer_state"]  = munis.get("issuer_state", "").astype(str).str.upper().str[:2]
+    munis["type"]          = munis.get("type", "GO").fillna("GO")
+
+    # fiscal flags & scores
+    if "surplus_flag" in fiscal.columns:
+        fiscal["surplus_flag"] = (
+            fiscal["surplus_flag"].astype(str).str.strip().str.lower()
+            .isin(["true", "1", "yes", "y", "t"])
+        )
+    else:
+        fiscal["surplus_flag"] = False
+
+    if "budget_score" not in fiscal.columns:
+        fiscal["budget_score"] = 70
+
+    fiscal["state"] = fiscal["state"].astype(str).str.upper().str[:2]
+
     return munis, fiscal
 
 # ---- State tax rules loader (uses your uploaded CSV) ----
@@ -273,26 +311,35 @@ st.dataframe(view, use_container_width=True, hide_index=True)
 # ---------- Ladder (Plotly) ----------
 st.divider()
 st.subheader("Tax-Aware Ladder (by adjusted TEY)")
-hmap = {"3 yrs":3, "5 yrs":5, "7 yrs":7, "10 yrs":10}
+hmap = {"3 yrs": 3, "5 yrs": 5, "7 yrs": 7, "10 yrs": 10}
 target_rungs = hmap[horizon]
-mats = sorted(view["maturity_year"].unique()) if "maturity_year" in view else []
-if len(mats):
-    if len(mats) >= target_rungs:
-        idxs = np.linspace(0, len(mats)-1, target_rungs, dtype=int).tolist()
-        rung_years = [mats[i] for i in idxs]
+
+if not view.empty and "maturity_year" in view.columns:
+    mats = sorted(view["maturity_year"].dropna().unique().tolist())
+else:
+    mats = []
+
+if mats:
+    idxs = np.linspace(0, len(mats) - 1, min(target_rungs, len(mats)), dtype=int).tolist()
+    rung_years = [mats[i] for i in idxs]
+
+    picks = []
+    for y in rung_years:
+        row = view[view["maturity_year"] == y].sort_values("TEY_Adj_%", ascending=False).head(1)
+        if not row.empty:
+            picks.append(row.assign(rung=y))
+
+    if picks:
+        ladder = pd.concat(picks, ignore_index=True)
+        fig = px.bar(
+            ladder, x="rung", y="TEY_Adj_%", color="Tier", text="Tier",
+            labels={"rung": "Maturity Year", "TEY_Adj_%": "Adj TEY (%)"}
+        )
+        fig.update_traces(textposition="outside")
+        fig.update_layout(showlegend=False, height=380, margin=dict(t=10, b=10, l=10, r=10))
+        st.plotly_chart(fig, use_container_width=True)
     else:
-        rung_years = [mats[i % len(mats)] for i in range(target_rungs)]
-    ladder = pd.concat([
-        view[view["maturity_year"]==y].sort_values("TEY_Adj_%", ascending=False).head(1).assign(rung=y)
-        for y in rung_years if not view[view["maturity_year"]==y].empty
-    ])
-    fig = px.bar(
-        ladder, x="rung", y="TEY_Adj_%", color="Tier", text="Tier",
-        labels={"rung":"Maturity Year","TEY_Adj_%":"Adj TEY (%)"}
-    )
-    fig.update_traces(textposition="outside")
-    fig.update_layout(showlegend=False, height=380, margin=dict(t=10,b=10,l=10,r=10))
-    st.plotly_chart(fig, use_container_width=True)
+        st.info("No candidates for the ladder with current filters.")
 else:
     st.info("No bonds match the current filters.")
 
